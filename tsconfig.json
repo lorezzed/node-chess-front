@@ -1,0 +1,15 @@
+{
+    "compilerOptions": {
+        "target": "ES5",
+        "module": "commonjs"
+    },
+    "filesGlob": [
+        "./src/**/*.ts"
+    ],
+    "files": [
+        "./src/app.ts",
+        "./src/typings/angularjs/angular.d.ts",
+        "./src/typings/jquery/jquery.d.ts",
+        "./src/typings/node/node.d.ts"
+    ]
+}

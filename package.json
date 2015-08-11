@@ -1,0 +1,16 @@
+{
+  "name": "node-chess-front",
+  "version": "0.1.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build": "tsglob && tsc && browserify src/app.js -o bundle.js"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "angular": "^1.4.3",
+    "node-chess": "^0.7.0"
+  }
+}
