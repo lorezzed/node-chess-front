@@ -11,6 +11,7 @@
   "license": "ISC",
   "dependencies": {
     "angular": "^1.4.3",
-    "node-chess": "^0.7.0"
+    "node-chess": "*",
+    "uniq": "^1.0.1"
   }
 }
