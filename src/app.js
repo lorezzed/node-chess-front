@@ -8,25 +8,29 @@ var chess = require("node-chess");
 var data = [1, 2, 2, 3, 3, 3, 3, 3, 3, 3, 2, 2, 2];
 console.log(unique(data));
 
+//setupDivs(); //built for chess.html
+
 angular
     .module('app', [])
     .controller('myController', require('./test/test.controller'));
 
 
 
-addDebug();
-addParallax();
-addGroup1();
-addGroup2();
-addGroup3();
 
 var debugInput = document.querySelector('input');
 debugInput.addEventListener('click', updateDebugState);
 updateDebugState();
 
-
+function setupDivs() {
+    addDebug();
+    addParallax();
+    addGroup1();
+    addGroup2();
+    addGroup3();
+}
 
 function updateDebugState() {
+    console.log('updating');
     document.body.classList.toggle('debug-on', debugInput.checked);
 };
 

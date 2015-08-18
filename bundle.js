@@ -33398,7 +33398,6 @@ module.exports = BasePiece;
 },{"./helpers/applyTransform":16,"./helpers/getTransforms":24}],15:[function(require,module,exports){
 var toString = require("./helpers/toString");
 var getMoves = require("./helpers/getMoves");
-var inferMoves = require("./helpers/inferMoves");
 var movePiece = require("./helpers/movePiece");
 var fenParser = require("./parsers/fen");
 var createSqaures = require("./helpers/createSquares");
@@ -33423,13 +33422,12 @@ var Engine = (function () {
         };
         this.pieces = [];
         this.positionParser = fenParser.bind(this);
+        this.toString = toString.bind(this);
+        this.create = createSqaures.bind(this);
+        this.pieceFactory = BasePiece;
+        this.availableMoves = getMoves.bind(this);
         this.movePiece = movePiece.bind(this);
         this.getSquare = getSquare.bind(this);
-        this.getMoves = getMoves.bind(this);
-        this.create = createSqaures.bind(this);
-        this.inferMoves = inferMoves.bind(this);
-        this.toString = toString.bind(this);
-        this.pieceFactory = BasePiece;
         this.populateAvailableMoves = availableMoves.bind(this);
         this.createPiece = createPiece.bind(this);
         ranks = ranks || 8;
@@ -33444,7 +33442,7 @@ var Engine = (function () {
 })();
 module.exports = Engine;
 
-},{"./basePiece":14,"./helpers/availableMoves":17,"./helpers/createPiece":18,"./helpers/createSquares":19,"./helpers/getMoves":21,"./helpers/getSquare":23,"./helpers/inferMoves":25,"./helpers/movePiece":28,"./helpers/toString":29,"./parsers/fen":31}],16:[function(require,module,exports){
+},{"./basePiece":14,"./helpers/availableMoves":17,"./helpers/createPiece":18,"./helpers/createSquares":19,"./helpers/getMoves":21,"./helpers/getSquare":23,"./helpers/movePiece":27,"./helpers/toString":28,"./parsers/fen":30}],16:[function(require,module,exports){
 function applyTransform(coordinate, transform) {
     return { file: coordinate.file + transform.file, rank: coordinate.rank + transform.rank };
 }
@@ -33453,14 +33451,11 @@ module.exports = applyTransform;
 },{}],17:[function(require,module,exports){
 function availableMoves(boardState) {
     var self = this;
-    boardState = boardState || self.boardState;
-    var moves = [];
     boardState.ranks.forEach(function (rank) {
         rank.squares.forEach(function (square) {
-            moves = moves.concat(self.inferMoves({ file: square.file, rank: rank.rank }, boardState));
+            square.availableMoves = self.availableMoves({ file: square.file, rank: rank.rank }, boardState);
         });
     });
-    boardState.moves = moves;
 }
 module.exports = availableMoves;
 
@@ -33508,8 +33503,7 @@ function deepCopy(boardState) {
         whitesTurn: boardState.whitesTurn,
         capturedPieces: boardState.capturedPieces.map(copyPiece),
         preMoveFunctions: shallowCopyArray(boardState.preMoveFunctions),
-        postMoveFunctions: shallowCopyArray(boardState.postMoveFunctions),
-        moves: copyAvailableMoves(boardState.moves)
+        postMoveFunctions: shallowCopyArray(boardState.postMoveFunctions)
     };
     return copy;
 }
@@ -33524,6 +33518,7 @@ function copyRank(rank) {
             file: sq.file,
             piece: copyPiece(sq.piece),
             tags: shallowCopy(sq.tags),
+            availableMoves: copyAvailableMoves(sq.availableMoves)
         };
     });
     return copy;
@@ -33544,7 +33539,6 @@ function copyPiece(piece) {
     copy.location = { rank: piece.location.rank, file: piece.location.file };
     copy.movement = shallowCopyArray(piece.movement);
     copy.getRelativeDestinations = piece.getRelativeDestinations;
-    copy.postMoveFunctions = piece.postMoveFunctions.slice();
     return copy;
 }
 function copyAvailableMoves(moves) {
@@ -33552,8 +33546,7 @@ function copyAvailableMoves(moves) {
         return {
             from: shallowCopy(move.from),
             to: shallowCopy(move.to),
-            postMoveActions: shallowCopyArray(move.postMoveActions),
-            isWhite: move.isWhite
+            postMoveActions: shallowCopyArray(move.postMoveActions)
         };
     }
     return moves.map(copyMove);
@@ -33564,15 +33557,54 @@ function shallowCopyArray(array) {
 module.exports = deepCopy;
 
 },{}],21:[function(require,module,exports){
+var getPaths = require("./getPaths");
+var isValidPath = require("./isValidPath");
+// TODO: Desperately requires refactoring
 function getMoves(coordinate, boardState) {
+    var stopwatch = Date.now(); // Benchmarking
     var self = this;
-    boardState = boardState || self.boardState;
-    return boardState.moves
-        .filter(function (move) { return move.from.file === coordinate.file && move.from.rank === coordinate.rank; });
+    var square = self.getSquare(coordinate, boardState);
+    // No piece, no moves.
+    var piece = square.piece;
+    if (!piece)
+        return [];
+    // We want all moves available on the entire board for calculation purposes
+    // Therefore we leave this commented out
+    // var isMoveablePiece = piece.isWhite === board.whitesTurn;
+    //if (!isMoveablePiece) return [];
+    var bounds = { file: self.fileCount, rank: self.rankCount };
+    var pathings = [];
+    var movePatterns = piece.movement.slice(0);
+    var moves = [];
+    movePatterns.forEach(function (move) {
+        var newPathings = getPaths(coordinate, move, piece.isWhite, bounds);
+        var validPathings = newPathings.forEach(function (pathing) {
+            // If it's a vanilla move pattern, use the standard path validation strategy
+            if (!move.conditions) {
+                if (isValidPath(self, boardState, piece, pathing, move)) {
+                    moves.push({
+                        to: pathing[pathing.length - 1],
+                        postMoveActions: []
+                    });
+                }
+                return;
+            }
+            // Otherwise we use the logic provided with the move pattern
+            var defaultValidPath = !!move.useDefaultConditions ? isValidPath(self, boardState, piece, pathing, move) : true;
+            var movePatternEvaluation = move.conditions.every(function (cond) { return cond(piece, boardState, self); });
+            if (defaultValidPath && movePatternEvaluation) {
+                moves.push({
+                    to: pathing[pathing.length - 1],
+                    postMoveActions: move.postMoveActions || []
+                });
+            }
+        });
+    });
+    return moves;
 }
 module.exports = getMoves;
 
-},{}],22:[function(require,module,exports){
+},{"./getPaths":22,"./isValidPath":26}],22:[function(require,module,exports){
 var isInBounds = require("./isInBounds");
 var getTransforms = require("./getTransforms");
 function getPaths(coordinate, movePattern, isWhite, bounds) {
@@ -33631,10 +33663,8 @@ function combinePathings(leftPathings, rightPathings) {
 }
 module.exports = getPaths;
 
-},{"./getTransforms":24,"./isInBounds":26}],23:[function(require,module,exports){
+},{"./getTransforms":24,"./isInBounds":25}],23:[function(require,module,exports){
 function getSquare(square, boardState) {
-    var self = this;
-    boardState = boardState || self.boardState;
     if (!boardState.ranks[square.rank])
         return null;
     return boardState.ranks[square.rank].squares[square.file] || null;
@@ -33696,65 +33726,13 @@ function getTransforms(singleMove, isWhite) {
 }
 module.exports = getTransforms;
 
-},{"../../enums":40}],25:[function(require,module,exports){
-var getPaths = require("./getPaths");
-var isValidPath = require("./isValidPath");
-// TODO: Desperately requires refactoring
-function getMoves(coordinate, boardState) {
-    var self = this;
-    boardState = boardState || self.boardState;
-    var square = self.getSquare(coordinate, boardState);
-    // No piece, no moves.
-    var piece = square.piece;
-    if (!piece)
-        return [];
-    // We want all moves available on the entire board for calculation purposes
-    // Therefore we leave this commented out
-    // var isMoveablePiece = piece.isWhite === board.whitesTurn;
-    //if (!isMoveablePiece) return [];
-    var bounds = { file: self.fileCount, rank: self.rankCount };
-    var pathings = [];
-    var movePatterns = piece.movement.slice(0);
-    var moves = [];
-    movePatterns.forEach(function (move) {
-        var newPathings = getPaths(coordinate, move, piece.isWhite, bounds);
-        var validPathings = newPathings.forEach(function (pathing) {
-            // If it's a vanilla move pattern, use the standard path validation strategy
-            if (!move.conditions) {
-                if (isValidPath(self, boardState, piece, pathing, move)) {
-                    moves.push({
-                        from: coordinate,
-                        to: pathing[pathing.length - 1],
-                        postMoveActions: [],
-                        isWhite: piece.isWhite
-                    });
-                }
-                return;
-            }
-            // Otherwise we use the logic provided with the move pattern
-            var defaultValidPath = !!move.useDefaultConditions ? isValidPath(self, boardState, piece, pathing, move) : true;
-            var movePatternEvaluation = move.conditions.every(function (cond) { return cond(piece, boardState, self); });
-            if (defaultValidPath && movePatternEvaluation) {
-                moves.push({
-                    from: coordinate,
-                    to: pathing[pathing.length - 1],
-                    postMoveActions: move.postMoveActions || [],
-                    isWhite: piece.isWhite
-                });
-            }
-        });
-    });
-    return moves;
-}
-module.exports = getMoves;
-
-},{"./getPaths":22,"./isValidPath":27}],26:[function(require,module,exports){
+},{"../../enums":39}],25:[function(require,module,exports){
 function isInBounds(coordinate, bounds) {
     return coordinate.rank <= bounds.rank && coordinate.file <= bounds.file && coordinate.rank > 0 && coordinate.file > 0;
 }
 module.exports = isInBounds;
 
-},{}],27:[function(require,module,exports){
+},{}],26:[function(require,module,exports){
 function isValidPath(board, boardState, piece, path, move) {
     // TODO: Rules API would be used here
     var isWhite = !!piece.isWhite;
@@ -33785,7 +33763,7 @@ function isValidPath(board, boardState, piece, path, move) {
 }
 module.exports = isValidPath;
 
-},{}],28:[function(require,module,exports){
+},{}],27:[function(require,module,exports){
 var deepCopy = require("./deepCopy");
 function movePiece(from, to, boardState) {
     var self = this;
@@ -33795,23 +33773,22 @@ function movePiece(from, to, boardState) {
     boardState = deepCopy(boardState || self.boardState);
     var origin = self.getSquare(from, boardState);
     if (!origin || !origin.piece)
-        return null;
+        return boardState;
     // Enforce turn-based movement
     if (boardState.whitesTurn !== origin.piece.isWhite)
-        return null;
+        return boardState;
     // The 'destination' square must be in the square's list of available moves
-    var move = boardState.moves.filter(function (m) {
-        return m.from.file === from.file && m.from.rank === from.rank &&
-            m.to.file === to.file && m.to.rank === to.rank;
-    })[0];
-    if (!move)
-        return null;
+    var moveMatches = origin.availableMoves.filter(function (m) { return m.to.file === to.file && m.to.rank === to.rank; });
+    if (moveMatches.length === 0)
+        return boardState;
+    var move = moveMatches[0];
     var destination = self.getSquare(to, boardState);
     if (destination.piece)
         boardState.capturedPieces.push(destination.piece);
     destination.piece = origin.piece;
     destination.piece.location = { file: to.file, rank: to.rank };
-    destination.piece.moveHistory.push({ from: from, to: to, isWhite: origin.piece.isWhite });
+    destination.availableMoves = [];
+    destination.piece.moveHistory.push({ from: from, to: to });
     var movePatternPostActions = move.postMoveActions || [];
     movePatternPostActions.forEach(function (func) {
         func.action(destination.piece, boardState, self);
@@ -33819,6 +33796,7 @@ function movePiece(from, to, boardState) {
     var pieceFunctions = destination.piece.postMoveFunctions || [];
     pieceFunctions.forEach(function (fn) { return fn.action(destination.piece, boardState, self); });
     origin.piece = null;
+    origin.availableMoves = [];
     boardState.whitesTurn = !boardState.whitesTurn;
     self.populateAvailableMoves(boardState);
     var enginePostMoveActions = boardState.postMoveFunctions || [];
@@ -33834,7 +33812,7 @@ function movePiece(from, to, boardState) {
 }
 module.exports = movePiece;
 
-},{"./deepCopy":20}],29:[function(require,module,exports){
+},{"./deepCopy":20}],28:[function(require,module,exports){
 function toString() {
     var self = this;
     var ranks = [];
@@ -33857,7 +33835,7 @@ function toString() {
 }
 module.exports = toString;
 
-},{}],30:[function(require,module,exports){
+},{}],29:[function(require,module,exports){
 var Engine = require("../engine");
 var pieces = require("../pieces/pieces");
 function classEngine() {
@@ -33869,7 +33847,7 @@ function classEngine() {
 }
 module.exports = classEngine;
 
-},{"../engine":15,"../pieces/pieces":37}],31:[function(require,module,exports){
+},{"../engine":15,"../pieces/pieces":36}],30:[function(require,module,exports){
 var fenStringParser = require("./stringParsers/fen");
 var defaultPosition = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 function fenParser(position) {
@@ -33915,12 +33893,12 @@ function createFilesForRank(engine, fenRank, rankNumber) {
 }
 module.exports = fenParser;
 
-},{"./stringParsers/fen":32}],32:[function(require,module,exports){
+},{"./stringParsers/fen":31}],31:[function(require,module,exports){
 var PEG = require("pegjs");
 var parser = PEG.buildParser("\n\tStart\n\t= r:RankList WS t:Turn WS c:Castling WS Enpassant WS h:HalfMove WS m:Move\n\t{ return {\n\tranks: r,\n\tturn: t,\n\tcastling: c,\n\thalfMove: h,\n\tfullMove: t };\n\t}\n\tRankList\n\t= head:Rank \"/\" tail:RankList { return [].concat(head,tail); }\n\t/ Rank\n\n\tRank\n\t= rank:[a-zA-Z0-9]+ { return rank.join(''); }\n\n\tWS\n\t= \" \"* { return null; }\n\n\tTurn\n\t= turn:[w|b] { return turn }\n\n\tCastling\n\t= [k|q|K|Q|\"-\"]+\n\n\tEnpassant\n\t= [a-h1-8]{1}\n\t/ \"-\"\n\n\tHalfMove\n\t= [0-9]+\n\n\tMove\n\t= [0-9]+\n");
 module.exports = parser;
 
-},{"pegjs":12}],33:[function(require,module,exports){
+},{"pegjs":12}],32:[function(require,module,exports){
 var enums = require("../../enums");
 var Direction = enums.Direction;
 var diag = {
@@ -33939,17 +33917,16 @@ var bishop = {
 };
 module.exports = bishop;
 
-},{"../../enums":40}],34:[function(require,module,exports){
+},{"../../enums":39}],33:[function(require,module,exports){
 var enums = require("../../enums");
 var Direction = enums.Direction;
 var queenSideCastleCondition = function (piece, boardState, board) {
     if (piece.moveHistory.length > 0)
         return false;
-    var f = function (num) { return getSquare(piece, board, boardState, Direction.QueenSide, num); };
-    var queenSquare = f(1);
-    var bishopSquare = f(2);
-    var knightSquare = f(3);
-    var rookSquare = f(4);
+    var queenSquare = getSquare(piece, board, boardState, Direction.QueenSide, 1);
+    var bishopSquare = getSquare(piece, board, boardState, Direction.QueenSide, 2);
+    var knightSquare = getSquare(piece, board, boardState, Direction.QueenSide, 3);
+    var rookSquare = getSquare(piece, board, boardState, Direction.QueenSide, 4);
     var squaresAreVacant = !queenSquare.piece
         && !bishopSquare.piece
         && !knightSquare.piece
@@ -33962,10 +33939,9 @@ var queenSideCastleCondition = function (piece, boardState, board) {
 var kingSideCastleCondition = function (piece, boardState, board) {
     if (piece.moveHistory.length > 0)
         return false;
-    var f = function (num) { return getSquare(piece, board, boardState, Direction.KingSide, num); };
-    var bishopSquare = f(1);
-    var knightSquare = f(2);
-    var rookSquare = f(3);
+    var bishopSquare = getSquare(piece, board, boardState, Direction.KingSide, 1);
+    var knightSquare = getSquare(piece, board, boardState, Direction.KingSide, 2);
+    var rookSquare = getSquare(piece, board, boardState, Direction.KingSide, 3);
     var squaresAreVacant = !bishopSquare.piece
         && !knightSquare.piece
         && !!rookSquare.piece;
@@ -34034,7 +34010,7 @@ var king = {
 };
 module.exports = king;
 
-},{"../../enums":40}],35:[function(require,module,exports){
+},{"../../enums":39}],34:[function(require,module,exports){
 var enums = require("../../enums");
 var Direction = enums.Direction;
 var horzThenVert = {
@@ -34059,7 +34035,7 @@ var knight = {
 };
 module.exports = knight;
 
-},{"../../enums":40}],36:[function(require,module,exports){
+},{"../../enums":39}],35:[function(require,module,exports){
 var enums = require("../../enums");
 var Direction = enums.Direction;
 var firstMoveCondition = function (piece) {
@@ -34160,7 +34136,7 @@ var pawn = {
 };
 module.exports = pawn;
 
-},{"../../enums":40}],37:[function(require,module,exports){
+},{"../../enums":39}],36:[function(require,module,exports){
 var Pawn = require("./pawn");
 var Rook = require("./rook");
 var Knight = require("./knight");
@@ -34177,7 +34153,7 @@ var pieces = {
 };
 module.exports = pieces;
 
-},{"./bishop":33,"./king":34,"./knight":35,"./pawn":36,"./queen":38,"./rook":39}],38:[function(require,module,exports){
+},{"./bishop":32,"./king":33,"./knight":34,"./pawn":35,"./queen":37,"./rook":38}],37:[function(require,module,exports){
 var enums = require("../../enums");
 var Direction = enums.Direction;
 var diag = {
@@ -34202,7 +34178,7 @@ var queen = {
 };
 module.exports = queen;
 
-},{"../../enums":40}],39:[function(require,module,exports){
+},{"../../enums":39}],38:[function(require,module,exports){
 var enums = require("../../enums");
 var Direction = enums.Direction;
 var lat = {
@@ -34221,7 +34197,7 @@ var rook = {
 };
 module.exports = rook;
 
-},{"../../enums":40}],40:[function(require,module,exports){
+},{"../../enums":39}],39:[function(require,module,exports){
 (function (Direction) {
     Direction[Direction["Up"] = 0] = "Up";
     Direction[Direction["Down"] = 1] = "Down";
@@ -34242,22 +34218,20 @@ module.exports = rook;
 })(exports.Direction || (exports.Direction = {}));
 var Direction = exports.Direction;
 
-},{}],41:[function(require,module,exports){
+},{}],40:[function(require,module,exports){
 var Engine = require("./engine/engine");
 var classicEngine = require("./engine/instances/classic");
 var classicPieces = require("./engine/pieces/pieces");
 var enums = require("./enums");
-var chess = {
-    Engine: Engine,
-    classic: {
-        engine: classicEngine,
-        pieces: classicPieces,
-    },
-    Direction: enums.Direction
+var Directions = enums.Direction;
+exports.engine = Engine;
+exports.classic = {
+    engine: classicEngine,
+    pieces: classicPieces
 };
-module.exports = chess;
+exports.Direction = Directions;
 
-},{"./engine/engine":15,"./engine/instances/classic":30,"./engine/pieces/pieces":37,"./enums":40}],42:[function(require,module,exports){
+},{"./engine/engine":15,"./engine/instances/classic":29,"./engine/pieces/pieces":36,"./enums":39}],41:[function(require,module,exports){
 "use strict"
 
 function unique_pred(list, compare) {
@@ -34316,7 +34290,7 @@ function unique(list, compare, sorted) {
 
 module.exports = unique
 
-},{}],43:[function(require,module,exports){
+},{}],42:[function(require,module,exports){
 'use strict';
 var angular = require("angular");
 var unique = require('uniq');
@@ -34327,28 +34301,33 @@ var chess = require("node-chess");
 var data = [1, 2, 2, 3, 3, 3, 3, 3, 3, 3, 2, 2, 2];
 console.log(unique(data));
 
+//setupDivs(); //built for chess.html
+
 angular
     .module('app', [])
     .controller('myController', require('./test/test.controller'));
 
 
 
-addDebug();
-addParallax();
-addGroup1();
-addGroup2();
-addGroup3();
 
 var debugInput = document.querySelector('input');
 debugInput.addEventListener('click', updateDebugState);
 updateDebugState();
 
+function setupDivs() {
+    addDebug();
+    addParallax();
+    addGroup1();
+    addGroup2();
+    addGroup3();
+}
+
 function updateDebugState() {
+    console.log('updating');
     document.body.classList.toggle('debug-on', debugInput.checked);
 };
 
 function addDebug() {
-
     var debugDiv = document.createElement('div');
     debugDiv.className = 'debug';
     document.getElementsByTagName('body')[0].appendChild(debugDiv);
@@ -34401,8 +34380,6 @@ function addGroup2() {
     baseTitleDiv.innerHTML = 'Base Layer';
     baseDiv.appendChild(baseTitleDiv);
 
-
-
     var backDiv = document.createElement('div');
     backDiv.className = 'parallax__layer parallax__layer--back';
     group2Div.appendChild(backDiv);
@@ -34438,7 +34415,7 @@ function addGroup3() {
     baseDiv.appendChild(baseTitleDiv);
 }
 
-},{"./test/test.controller":44,"angular":2,"node-chess":41,"uniq":42}],44:[function(require,module,exports){
+},{"./test/test.controller":43,"angular":2,"node-chess":40,"uniq":41}],43:[function(require,module,exports){
 'use strict';
 
 module.exports = testController;
@@ -34446,4 +34423,4 @@ module.exports = testController;
 function testController() {
 	this.sayHi = 'asdfdsf';
 }
-},{}]},{},[43]);
+},{}]},{},[42]);
