@@ -11,26 +11,38 @@
 
 
 		<div class="parallax">
-
-			<div class="screen1 parallax__group">
-
-				<div class="parallax__layer parallax__layer--board">
-					<div class="title">board 1</div>
+			<div id="group1" class="parallax__group">
+				<div class="parallax__layer parallax__layer--base">
+					<div class="title">Base Layer</div>
 				</div>
-				<div class="parallax__layer parallax__layer--piece">
-					<div class="title">piece 1</div>
+			</div>
+			<div id="group2" class="parallax__group">
+				<div class="parallax__layer parallax__layer--base">
+					<div class="title">222Base Layer</div>
+				</div>
+				<div class="parallax__layer parallax__layer--back">
+					<div class="title">222Background Layer</div>
 				</div>
 			</div>
 
-			<div class="screen2 parallax__group">
-
-				<div class="parallax__layer parallax__layer--board">
-					<div class="title">board 2</div>
+			<!-- parallax__group: set 100% height + debug 3d coolness  - basically its the page-->
+			<div style="z-index:5; background:cyan;" class="parallax__group">
+				<div style="background:green; transform:translateZ(-300px) scale(2.5); z-index:13;" class="parallax__layer">
+					<div class="title">111111111</div>
 				</div>
-				<div class="parallax__layer parallax__layer--piece">
-					<div class="title">piece 2</div>
+				<div style="background:lightgreen; transform:translateZ(-100px) scale(1.3); z-index:4;"class="parallax__layer">
+					<div class="title">222222222</div>
 				</div>
 			</div>
+
+			<!-- <div style="z-index:6; background:purple;" class="parallax__group">
+				<div style="background:green; transform: translateZ(-300px) scale(2.5); z-index: 1;" class="parallax__layer">
+					<div class="title">111111111</div>
+				</div>
+				<div style="background:lightgreen; transform: translateZ(-100px) scale(1.3); z-index: 2;"class="parallax__layer">
+					<div class="title">222222222</div>
+				</div>
+			</div> -->
 
 		</div>
 
